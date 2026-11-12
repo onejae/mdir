@@ -1,0 +1,8 @@
+/bin/
+*.test
+coverage.out
+.env
+.env.*
+/.aws/
+/.codex/
+/.agents/

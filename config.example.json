@@ -1,0 +1,12 @@
+{
+  "launchers": {
+    "F2": {
+      "label": "Vim",
+      "command": "if [ -n \"$2\" ]; then vim \"$2\"; else vim; fi"
+    },
+    "F3": {
+      "label": "Shell",
+      "command": "exec \"${SHELL:-/bin/sh}\""
+    }
+  }
+}
