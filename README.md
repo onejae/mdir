@@ -16,8 +16,8 @@ PTY capture with disposable example files; glyph appearance depends on your term
 
 ### Homebrew
 
-The tap is being prepared for publication. Once the tagged release and
-[`onejae/homebrew-tap`](https://github.com/onejae/homebrew-tap) are published:
+Install on macOS or Linux using the
+[`onejae/homebrew-tap`](https://github.com/onejae/homebrew-tap) tap:
 
 ```sh
 brew install onejae/tap/mdir
