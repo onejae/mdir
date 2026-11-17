@@ -266,7 +266,10 @@ func TestViewerAndArchiveNavigation(t *testing.T) {
 
 func TestTreeAndFindResultNavigation(t *testing.T) {
 	a, _ := testApp(t)
-	original := a.Cwd
+	original, err := filepath.EvalSymlinks(a.Cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
 	typeText(a, "t")
 	if a.tree == nil || a.tree.Rows[a.tree.Cursor].Path != original {
 		t.Fatal("tree not focused on current directory")
@@ -408,6 +411,10 @@ func TestTreeFocusThroughSymlinkAncestor(t *testing.T) {
 	a, _ := testApp(t)
 	physical := filepath.Join(a.Cwd, "folder", "nested")
 	if err := os.Mkdir(physical, 0755); err != nil {
+		t.Fatal(err)
+	}
+	physical, err := filepath.EvalSymlinks(physical)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink("folder", filepath.Join(a.Cwd, "alias")); err != nil {
