@@ -1,6 +1,6 @@
 # mdir-fm
 
-A native Linux terminal file manager inspired by **Korean MDIR III 3.x**, with
+A terminal file manager for Linux and macOS inspired by **Korean MDIR III 3.x**, with
 Vim navigation and its classic black/cyan file list, red cursor, colored file
 types, and blue/yellow directory tree. This is a new Go implementation.
 
@@ -14,6 +14,22 @@ PTY capture with disposable example files; glyph appearance depends on your term
 
 ## Run
 
+### Homebrew
+
+The tap is being prepared for publication. Once the tagged release and
+[`onejae/homebrew-tap`](https://github.com/onejae/homebrew-tap) are published:
+
+```sh
+brew install onejae/tap/mdir
+mdir-fm
+```
+
+The package is `mdir`; the executable is `mdir-fm`. Homebrew builds the release
+from source and installs Go as a build dependency. See the
+[publication steps](packaging/homebrew/README.md) for release and tap validation.
+
+### Build from source
+
 The built executable is `bin/mdir-fm`:
 
 ```sh
@@ -21,7 +37,7 @@ The built executable is `bin/mdir-fm`:
 ./bin/mdir-fm /path/to/directory
 ```
 
-To build from source, use Go 1.24 or newer:
+To build from source, use Go 1.25 or newer:
 
 ```sh
 make build
@@ -72,7 +88,7 @@ Counts work with `j` and `k`, for example `12j`. Prompts accept ordinary text;
 | `Alt-k`, `F7` | Create a directory |
 | `F3`, `Alt-v` | View text or hex |
 | `e`, `Alt-g`, `F4` | Edit with `VISUAL`, `EDITOR`, `vim`, or `vi` |
-| `o` | Execute, or open with `xdg-open` |
+| `o` | Execute, or open with `xdg-open` (Linux) / `open` (macOS) |
 | `i` / `C` / `Alt-h` | Properties / file comment / Unix permissions |
 | `f` | Recursive filename search |
 | `t`, `F10` | MCD directory tree |
@@ -89,6 +105,13 @@ cancels background jobs; completed items remain. Errors report partial progress.
 Directory copies preserve symlinks rather than following them. Special files
 such as devices and FIFOs are not copied or opened in the viewer. Permission
 changes accept ordinary octal modes `000`–`777` and refuse symlinks.
+
+On macOS, changing permissions requires opening the entry without following
+symlinks. If its current permissions prevent that open, Mdir reports an error
+and leaves it unchanged; use your shell's `chmod` to restore access.
+Directory copies and archive creation on macOS also require read access to the
+destination's ancestor directories so Mdir can verify that the destination is
+outside the source tree. An inaccessible ancestor causes the operation to fail.
 
 Moves across filesystems verify copied file contents and check destinations
 again before removing source entries. Detected concurrent changes stop cleanup

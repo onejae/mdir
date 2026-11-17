@@ -10,6 +10,7 @@ import pty
 import select
 import signal
 import struct
+import sys
 import tempfile
 import termios
 import time
@@ -48,8 +49,8 @@ def main():
             environment.update(
                 TERM="xterm-256color",
                 COLORTERM="truecolor",
-                LANG="C.UTF-8",
-                LC_ALL="C.UTF-8",
+                LANG="en_US.UTF-8" if sys.platform == "darwin" else "C.UTF-8",
+                LC_ALL="en_US.UTF-8" if sys.platform == "darwin" else "C.UTF-8",
                 XDG_CONFIG_HOME=str(base / "config"),
                 XDG_STATE_HOME=str(base / "state"),
                 VISUAL=str(editor),
@@ -93,7 +94,8 @@ def main():
 
         try:
             resize(100, 28)
-            wait_for(lambda: b"MDIR / LINUX" in output, "initial screen")
+            banner = b"MDIR / MACOS" if sys.platform == "darwin" else b"MDIR / LINUX"
+            wait_for(lambda: banner in output, "initial screen")
             # tcell positions wide glyphs individually, so they need not be adjacent in the byte stream.
             assert all(char.encode() in output for char in "한글"), "Unicode filename missing"
             assert b"48;2;0;170;170" in output, "DOS cyan RGB background missing"
@@ -155,7 +157,7 @@ def main():
                     assert os.waitstatus_to_exitcode(status) == 0, "binary exited unsuccessfully"
                     break
             assert reaped, "binary did not quit"
-            assert last_dir.read_text().strip() == str(root), "last-directory output wrong"
+            assert Path(last_dir.read_text().strip()).resolve() == root.resolve(), "last-directory output wrong"
             assert (base / "state" / "mdir" / "state.json").exists(), "history not saved"
             print("PASS: real PTY startup, Unicode, mkdir/copy/rename/move, viewer, editor, tree, delete confirmation, archive extraction, shell, resize, quit")
         finally:

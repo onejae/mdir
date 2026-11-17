@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"unicode"
@@ -146,7 +147,11 @@ func (a *App) drawFiles() {
 	}
 	a.line(1, clip(" Path "+path, w), pathStyle)
 	a.line(2, strings.Repeat("─", w), baseStyle.Foreground(cyan))
-	header := " MDIR / LINUX  ·  VIM "
+	platform := strings.ToUpper(runtime.GOOS)
+	if runtime.GOOS == "darwin" {
+		platform = "MACOS"
+	}
+	header := " MDIR / " + platform + "  ·  VIM "
 	if a.archive != nil {
 		header += "· ARCHIVE "
 	}
@@ -222,7 +227,7 @@ func (a *App) drawFiles() {
 	summary := fmt.Sprintf(" %d Files  %d Dirs  %s bytes  %d selected", fileCount, dirs, humanSize(total), len(a.selected))
 	var fs syscall.Statfs_t
 	if syscall.Statfs(a.Cwd, &fs) == nil {
-		summary += "  Free " + humanSize(int64(fs.Bavail)*fs.Bsize)
+		summary += "  Free " + humanSize(int64(fs.Bavail)*int64(fs.Bsize))
 	}
 	a.line(h-4, summary, pathStyle)
 	current := a.current()

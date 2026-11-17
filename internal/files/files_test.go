@@ -357,6 +357,9 @@ func TestMoveCrossDeviceFallback(t *testing.T) {
 		base := t.TempDir()
 		src, dst := filepath.Join(base, "src"), filepath.Join(base, "dst")
 		putFile(t, filepath.Join(src, "nested", "file"), "cross device")
+		if err := os.Symlink("missing-target", filepath.Join(src, "dangling-link")); err != nil {
+			t.Fatal(err)
+		}
 		err := moveWithRename(context.Background(), src, dst, func(string, string) error { return unix.EXDEV })
 		if err != nil {
 			t.Fatal(err)
@@ -366,6 +369,9 @@ func TestMoveCrossDeviceFallback(t *testing.T) {
 		}
 		if got := fileContents(t, filepath.Join(dst, "nested", "file")); got != "cross device" {
 			t.Fatalf("moved contents = %q", got)
+		}
+		if target, err := os.Readlink(filepath.Join(dst, "dangling-link")); err != nil || target != "missing-target" {
+			t.Fatalf("moved symlink = %q, %v", target, err)
 		}
 	})
 	t.Run("failed copy keeps original", func(t *testing.T) {

@@ -147,16 +147,6 @@ func Search(ctx context.Context, root, pattern string, limit int) ([]Entry, erro
 	return entries, errors.Join(append(problems, err)...)
 }
 
-// Mounts reads the process's Linux mount table, including escaped mountpoints.
-func Mounts() ([]string, error) {
-	f, err := os.Open("/proc/self/mountinfo")
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	return parseMounts(bufio.NewScanner(f))
-}
-
 func parseMounts(scanner *bufio.Scanner) ([]string, error) {
 	scanner.Buffer(make([]byte, 4096), 1024*1024)
 	seen := map[string]bool{}

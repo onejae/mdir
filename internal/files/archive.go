@@ -576,7 +576,7 @@ func CreateArchive(ctx context.Context, format string, sources []string, dest st
 		tarWriter = tar.NewWriter(writer)
 	}
 	for i, source := range sources {
-		if err = addArchiveEntry(ctx, filepath.Clean(source), filepath.Base(filepath.Clean(source)), infos[i], zipWriter, tarWriter); err != nil {
+		if err = addArchiveEntry(ctx, sourceEntry{name: filepath.Clean(source)}, filepath.Base(filepath.Clean(source)), infos[i], zipWriter, tarWriter); err != nil {
 			break
 		}
 	}
@@ -595,7 +595,7 @@ func CreateArchive(ctx context.Context, format string, sources []string, dest st
 	return err
 }
 
-func addArchiveEntry(ctx context.Context, source, name string, info fs.FileInfo, zw *zip.Writer, tw *tar.Writer) error {
+func addArchiveEntry(ctx context.Context, source sourceEntry, name string, info fs.FileInfo, zw *zip.Writer, tw *tar.Writer) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -605,12 +605,12 @@ func addArchiveEntry(ctx context.Context, source, name string, info fs.FileInfo,
 	link := ""
 	if info.Mode()&os.ModeSymlink != 0 {
 		var err error
-		link, err = os.Readlink(source)
+		link, err = source.readlink()
 		if err != nil {
 			return err
 		}
 	} else if !info.IsDir() && !info.Mode().IsRegular() {
-		return fmt.Errorf("unsupported archive source type: %s", source)
+		return fmt.Errorf("unsupported archive source type: %s", source.name)
 	}
 	var writer io.Writer
 	if zw != nil {
@@ -646,7 +646,7 @@ func addArchiveEntry(ctx context.Context, source, name string, info fs.FileInfo,
 			return nil
 		}
 	}
-	f, err := openNoFollow(source, info.IsDir())
+	f, err := source.open(info.IsDir())
 	if err != nil {
 		return err
 	}
@@ -656,7 +656,7 @@ func addArchiveEntry(ctx context.Context, source, name string, info fs.FileInfo,
 		return err
 	}
 	if !sameFileVersion(info, actual) {
-		return fmt.Errorf("source changed while creating archive: %s", source)
+		return fmt.Errorf("source changed while creating archive: %s", source.name)
 	}
 	if !info.IsDir() {
 		if err := copyData(ctx, writer, f); err != nil {
@@ -667,7 +667,7 @@ func addArchiveEntry(ctx context.Context, source, name string, info fs.FileInfo,
 			return err
 		}
 		if !sameFileVersion(actual, current) {
-			return fmt.Errorf("source changed while creating archive: %s", source)
+			return fmt.Errorf("source changed while creating archive: %s", source.name)
 		}
 		return nil
 	}
@@ -675,13 +675,18 @@ func addArchiveEntry(ctx context.Context, source, name string, info fs.FileInfo,
 	if err != nil {
 		return err
 	}
+	root, err := rootFromFile(f)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
 	for _, child := range children {
-		childPath := filepath.Join(fdPath(f), child.Name())
-		childInfo, err := os.Lstat(childPath)
+		childSource := sourceEntry{parent: root, name: child.Name()}
+		childInfo, err := childSource.lstat()
 		if err != nil {
 			return err
 		}
-		if err := addArchiveEntry(ctx, childPath, path.Join(name, child.Name()), childInfo, zw, tw); err != nil {
+		if err := addArchiveEntry(ctx, childSource, path.Join(name, child.Name()), childInfo, zw, tw); err != nil {
 			return err
 		}
 	}

@@ -223,7 +223,7 @@ func (a *App) viewerFind(direction int, include bool) {
 }
 
 func (a *App) help() {
-	a.showText("Mdir help", `MDIR FOR LINUX — classic colors, Vim navigation
+	a.showText("Mdir help", `MDIR — classic colors, Vim navigation
 
 NAVIGATION
   j / k, Up / Down     Next / previous item (counts work: 12j)
@@ -289,7 +289,7 @@ COMMANDS (:)
   !COMMAND       Run shell command     shell        Interactive shell
   help           This help             q / quit     Exit
 
-SAFETY & LINUX DIFFERENCES
+SAFETY & PLATFORM DIFFERENCES
   Copy/move/rename never silently replace an existing destination.
   Delete is permanent and needs confirmation; cancel is selected by default.
   Canceling batch work leaves completed items in place; partial progress is reported.

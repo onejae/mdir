@@ -10,7 +10,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -68,7 +67,7 @@ func copyWithManifest(ctx context.Context, src, dst string, manifest *copiedEntr
 	if err := checkRootDestination(src, filepath.Base(dst), info, parent); err != nil {
 		return err
 	}
-	return copyEntry(ctx, src, parent, filepath.Base(dst), info, manifest)
+	return copyEntry(ctx, sourceEntry{name: src}, parent, filepath.Base(dst), info, manifest)
 }
 
 func checkRootDestination(src, name string, info fs.FileInfo, parent *os.Root) error {
@@ -79,10 +78,40 @@ func checkRootDestination(src, name string, info fs.FileInfo, parent *os.Root) e
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	// Recheck using the opened destination parent, so swapping an ancestor
-	// symlink after the initial validation cannot introduce a recursive copy.
-	return checkDestination(src, filepath.Join(fdPath(f), name), info)
+	// Walk the actual destination ancestry. Its displayed path may have been
+	// renamed or replaced since validation, so lexical paths cannot prove that
+	// the opened destination is outside the source tree.
+	defer func() { f.Close() }()
+	seen := map[fileIdentity]bool{}
+	for {
+		current, err := f.Stat()
+		if err != nil {
+			return err
+		}
+		if os.SameFile(info, current) {
+			return fmt.Errorf("destination is inside source: %s/%s", src, name)
+		}
+		id := identityOf(current)
+		if seen[id] {
+			return fmt.Errorf("destination ancestry changed during validation")
+		}
+		seen[id] = true
+		ancestor, err := openAt(f, "..", ancestorOpenFlags)
+		if err != nil {
+			return err
+		}
+		above, err := ancestor.Stat()
+		if err != nil {
+			ancestor.Close()
+			return err
+		}
+		if os.SameFile(current, above) {
+			ancestor.Close()
+			return nil
+		}
+		f.Close()
+		f = ancestor
+	}
 }
 
 // checkDestination resolves existing ancestors before checking self-copy.
@@ -132,7 +161,7 @@ func openNoFollow(path string, directory bool) (*os.File, error) {
 	return os.OpenFile(path, flags, 0)
 }
 
-func copyEntry(ctx context.Context, src string, parent *os.Root, name string, info fs.FileInfo, manifest *copiedEntry) error {
+func copyEntry(ctx context.Context, src sourceEntry, parent *os.Root, name string, info fs.FileInfo, manifest *copiedEntry) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -141,18 +170,17 @@ func copyEntry(ctx context.Context, src string, parent *os.Root, name string, in
 	}
 	switch {
 	case info.Mode()&os.ModeSymlink != 0:
-		target, err := os.Readlink(src)
+		target, err := src.readlink()
 		if err != nil {
 			return err
 		}
-		current, err := os.Lstat(src)
+		current, err := src.lstat()
 		if err != nil {
 			return err
 		}
 		if !sameFileVersion(info, current) {
-			return fmt.Errorf("source changed during copy: %s", src)
+			return fmt.Errorf("source changed during copy: %s", src.name)
 		}
-		// Root.Symlink is deliberately not used: it was added after Go 1.24.
 		// The open parent is held throughout this call and the target itself is
 		// copied verbatim, never followed.
 		if err := createLink(parent, name, target, info.ModTime()); err != nil {
@@ -163,7 +191,7 @@ func copyEntry(ctx context.Context, src string, parent *os.Root, name string, in
 		}
 		return nil
 	case info.IsDir():
-		source, err := openNoFollow(src, true)
+		source, err := src.open(true)
 		if err != nil {
 			return err
 		}
@@ -173,7 +201,7 @@ func copyEntry(ctx context.Context, src string, parent *os.Root, name string, in
 			return err
 		}
 		if !os.SameFile(info, actual) {
-			return fmt.Errorf("source changed during copy: %s", src)
+			return fmt.Errorf("source changed during copy: %s", src.name)
 		}
 		if err := parent.Mkdir(name, 0700); err != nil {
 			return err
@@ -187,9 +215,14 @@ func copyEntry(ctx context.Context, src string, parent *os.Root, name string, in
 		if err != nil {
 			return err
 		}
+		sourceRoot, err := rootFromFile(source)
+		if err != nil {
+			return err
+		}
+		defer sourceRoot.Close()
 		for _, child := range children {
-			childPath := filepath.Join(fdPath(source), child.Name())
-			childInfo, err := os.Lstat(childPath)
+			childSource := sourceEntry{parent: sourceRoot, name: child.Name()}
+			childInfo, err := childSource.lstat()
 			if err != nil {
 				return err
 			}
@@ -199,7 +232,7 @@ func copyEntry(ctx context.Context, src string, parent *os.Root, name string, in
 			if manifest != nil {
 				childManifest = &copiedEntry{}
 			}
-			if err := copyEntry(ctx, childPath, dest, child.Name(), childInfo, childManifest); err != nil {
+			if err := copyEntry(ctx, childSource, dest, child.Name(), childInfo, childManifest); err != nil {
 				return err
 			}
 			if manifest != nil {
@@ -226,7 +259,7 @@ func copyEntry(ctx context.Context, src string, parent *os.Root, name string, in
 		}
 		return nil
 	case info.Mode().IsRegular():
-		source, err := openNoFollow(src, false)
+		source, err := src.open(false)
 		if err != nil {
 			return err
 		}
@@ -236,7 +269,7 @@ func copyEntry(ctx context.Context, src string, parent *os.Root, name string, in
 			return err
 		}
 		if !actual.Mode().IsRegular() || !sameFileVersion(info, actual) {
-			return fmt.Errorf("source changed during copy: %s", src)
+			return fmt.Errorf("source changed during copy: %s", src.name)
 		}
 		if err := writeExclusiveFile(ctx, parent, name, source, info.Mode(), info.ModTime(), manifest); err != nil {
 			return err
@@ -246,29 +279,23 @@ func copyEntry(ctx context.Context, src string, parent *os.Root, name string, in
 			return err
 		}
 		if !sameFileVersion(actual, current) {
-			return fmt.Errorf("source changed during copy: %s", src)
+			return fmt.Errorf("source changed during copy: %s", src.name)
 		}
 		return nil
 	default:
-		return fmt.Errorf("unsupported file type: %s", src)
+		return fmt.Errorf("unsupported file type: %s", src.name)
 	}
 }
 
-// fdPath keeps metadata updates and child traversal anchored to an open inode.
-// Linux procfs is also used by Mounts; no external commands are executed.
-func fdPath(f *os.File) string {
-	return "/proc/self/fd/" + strconv.FormatUint(uint64(f.Fd()), 10)
-}
-
 // OpenRoot follows symlinks inside its tree. Recursive mutations instead open
-// one child with Linux O_NOFOLLOW, then anchor a new root to that descriptor.
+// one child with O_NOFOLLOW, then anchor a new root to that descriptor.
 func openChildRoot(parent *os.Root, name string) (*os.Root, error) {
 	f, err := openChildDirectory(parent, name)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	return os.OpenRoot(fdPath(f))
+	return rootFromFile(f)
 }
 
 func openChildDirectory(parent *os.Root, name string) (*os.File, error) {
@@ -277,11 +304,7 @@ func openChildDirectory(parent *os.Root, name string) (*os.File, error) {
 		return nil, err
 	}
 	defer dir.Close()
-	fd, err := unix.Openat(int(dir.Fd()), name, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
-	if err != nil {
-		return nil, err
-	}
-	return os.NewFile(uintptr(fd), name), nil
+	return openAt(dir, name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW)
 }
 
 func setMetadata(f *os.File, mode fs.FileMode, modTime time.Time) error {
@@ -291,7 +314,7 @@ func setMetadata(f *os.File, mode fs.FileMode, modTime time.Time) error {
 	if modTime.IsZero() {
 		return nil
 	}
-	return os.Chtimes(fdPath(f), modTime, modTime)
+	return setFileTimes(f, modTime)
 }
 
 func createLink(parent *os.Root, name, target string, modTime time.Time) error {
@@ -372,10 +395,6 @@ func writeExclusiveFile(ctx context.Context, root *os.Root, name string, src io.
 // falls back to copying, and the original is removed only after a complete copy.
 func Move(ctx context.Context, src, dst string) error {
 	return moveWithRename(ctx, src, dst, renameNoReplace)
-}
-
-func renameNoReplace(src, dst string) error {
-	return unix.Renameat2(unix.AT_FDCWD, src, unix.AT_FDCWD, dst, unix.RENAME_NOREPLACE)
 }
 
 // The rename function is an argument so cross-device and racing-destination
@@ -488,7 +507,7 @@ func removeEntry(ctx context.Context, parent *os.Root, name string) error {
 	if !os.SameFile(info, actual) {
 		return fmt.Errorf("directory changed during removal: %s", name)
 	}
-	dir, err := os.OpenRoot(fdPath(f))
+	dir, err := rootFromFile(f)
 	if err != nil {
 		return err
 	}

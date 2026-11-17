@@ -62,12 +62,7 @@ func recordCopiedLink(parent *os.Root, name, target string, copied *copiedEntry)
 	if err != nil {
 		return err
 	}
-	dir, err := parent.Open(".")
-	if err != nil {
-		return err
-	}
-	defer dir.Close()
-	actual, err := os.Readlink(filepath.Join(fdPath(dir), name))
+	actual, err := parent.Readlink(name)
 	if err != nil {
 		return err
 	}
@@ -89,7 +84,7 @@ func sameFileVersion(before, after fs.FileInfo) bool {
 	// same-size rewrites even if the writer restores the old modification time.
 	oldStat, oldOK := before.Sys().(*syscall.Stat_t)
 	newStat, newOK := after.Sys().(*syscall.Stat_t)
-	return oldOK && newOK && oldStat.Ctim == newStat.Ctim
+	return oldOK && newOK && sameChangeTime(oldStat, newStat)
 }
 
 func sameFileAttributes(before, after fs.FileInfo) bool {
@@ -98,6 +93,11 @@ func sameFileAttributes(before, after fs.FileInfo) bool {
 
 type fileIdentity struct{ device, inode uint64 }
 type copiedVersion struct{ original, current fs.FileInfo }
+
+func identityOf(info fs.FileInfo) fileIdentity {
+	stat := info.Sys().(*syscall.Stat_t)
+	return fileIdentity{uint64(stat.Dev), stat.Ino}
+}
 
 type copiedDestination struct {
 	parent      *os.Root
@@ -170,7 +170,7 @@ func removeCopiedTree(ctx context.Context, parent *os.Root, name string, copied 
 	if !os.SameFile(copied.info, actual) {
 		return fmt.Errorf("source directory changed after copy: %s", name)
 	}
-	dir, err := os.OpenRoot(fdPath(f))
+	dir, err := rootFromFile(f)
 	if err != nil {
 		return err
 	}
@@ -188,7 +188,7 @@ func removeCopiedTree(ctx context.Context, parent *os.Root, name string, copied 
 		destFile.Close()
 		return fmt.Errorf("destination directory changed after copy: %s", destination.name)
 	}
-	dest, err := os.OpenRoot(fdPath(destFile))
+	dest, err := rootFromFile(destFile)
 	destFile.Close()
 	if err != nil {
 		return err
@@ -219,8 +219,7 @@ func removeCopiedTree(ctx context.Context, parent *os.Root, name string, copied 
 }
 
 func removeCopiedLeaf(parent *os.Root, name string, copied, current fs.FileInfo, versions map[fileIdentity]copiedVersion, checkDestination func() error) error {
-	stat := copied.Sys().(*syscall.Stat_t)
-	id := fileIdentity{uint64(stat.Dev), stat.Ino}
+	id := identityOf(copied)
 	expected := copied
 	if previous, ok := versions[id]; ok {
 		if !sameFileVersion(copied, previous.original) {
@@ -236,11 +235,10 @@ func removeCopiedLeaf(parent *os.Root, name string, copied, current fs.FileInfo,
 		return err
 	}
 	defer parentFile.Close()
-	fd, err := unix.Openat(int(parentFile.Fd()), name, unix.O_PATH|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	f, err := openPinnedAt(parentFile, name)
 	if err != nil {
 		return err
 	}
-	f := os.NewFile(uintptr(fd), name)
 	defer f.Close()
 	before, err := f.Stat()
 	if err != nil {

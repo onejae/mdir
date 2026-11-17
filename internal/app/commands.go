@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -164,11 +165,15 @@ func (a *App) openExternal() {
 	if info.Mode().Perm()&0111 != 0 {
 		a.external(exec.Command(e.Path), true)
 	} else {
-		if _, err := exec.LookPath("xdg-open"); err != nil {
-			a.message("xdg-open is unavailable; use F3 to view or e to edit", true)
+		opener := "xdg-open"
+		if runtime.GOOS == "darwin" {
+			opener = "open"
+		}
+		if _, err := exec.LookPath(opener); err != nil {
+			a.message(opener+" is unavailable; use F3 to view or e to edit", true)
 			return
 		}
-		a.external(exec.Command("xdg-open", e.Path), false)
+		a.external(exec.Command(opener, e.Path), false)
 	}
 }
 

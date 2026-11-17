@@ -1,0 +1,74 @@
+class Mdir < Formula
+  desc "Terminal file manager with classic DOS colors and Vim navigation"
+  homepage "https://github.com/onejae/mdir"
+  url "https://github.com/onejae/mdir/archive/refs/tags/v@VERSION@.tar.gz"
+  sha256 "@SHA256@"
+  license "MIT"
+
+  depends_on "go" => :build
+
+  deny_network_access!
+
+  def fetch
+    system "go", "mod", "download"
+  end
+
+  def install
+    ENV["GOPROXY"] = "off"
+    system "go", "build", *std_go_args(output: bin/"mdir-fm"), "./cmd/mdir-fm"
+  end
+
+  test do
+    assert_equal "mdir-fm #{version}", shell_output("#{bin}/mdir-fm -version").strip
+
+    require "io/console"
+    require "pty"
+    require "timeout"
+
+    ENV["TERM"] = "xterm-256color"
+    ENV["XDG_CONFIG_HOME"] = (testpath/"config").to_s
+    ENV["XDG_STATE_HOME"] = (testpath/"state").to_s
+    fixture = testpath/"fixture"
+    fixture.mkpath
+    last_dir = testpath/"last-dir"
+
+    PTY.spawn(bin/"mdir-fm", "-last-dir", last_dir.to_s, fixture.to_s) do |reader, writer, pid|
+      reader.winsize = [25, 80]
+      exited = false
+      begin
+        Timeout.timeout(20) do
+          output = +""
+          output << reader.readpartial(4096) until output.include?("MDIR /")
+          writer.write(":mkdir brew-test\r")
+          writer.flush
+          reader.readpartial(4096) until (fixture/"brew-test").directory?
+          writer.write("q")
+          writer.flush
+          # Keep draining output so a full terminal buffer cannot block exit.
+          begin
+            loop { reader.readpartial(4096) }
+          rescue EOFError, Errno::EIO
+            nil
+          end
+          _, status = Process.wait2(pid)
+          exited = true
+          assert_predicate status, :success?
+        end
+      ensure
+        unless exited
+          begin
+            Process.kill("KILL", pid)
+          rescue Errno::ESRCH
+            nil
+          end
+          begin
+            Process.wait(pid)
+          rescue Errno::ECHILD
+            nil
+          end
+        end
+      end
+    end
+    assert_equal fixture.realpath.to_s, Pathname(last_dir.read.strip).realpath.to_s
+  end
+end

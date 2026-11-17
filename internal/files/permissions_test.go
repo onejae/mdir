@@ -1,11 +1,12 @@
 package files
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
-
-	"golang.org/x/sys/unix"
 )
 
 func TestChmodUnreadableFileAndDirectory(t *testing.T) {
@@ -16,9 +17,24 @@ func TestChmodUnreadableFileAndDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, path := range []string{file, dir} {
+		t.Cleanup(func() { _ = os.Chmod(path, 0700) })
 		if err := os.Chmod(path, 0); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if runtime.GOOS == "darwin" && os.Geteuid() != 0 {
+		// Darwin cannot safely pin an unreadable inode. It must leave the
+		// permissions intact instead of falling back to a replaceable path.
+		for _, path := range []string{file, dir} {
+			if err := Chmod(path, 0750); !errors.Is(err, fs.ErrPermission) {
+				t.Fatalf("unreadable entry did not fail safely: %v", err)
+			}
+			info, err := os.Lstat(path)
+			if err != nil || info.Mode().Perm() != 0 {
+				t.Fatalf("unreadable entry changed: %v, %v", info, err)
+			}
+		}
+		return
 	}
 	if err := Chmod(file, 0644); err != nil {
 		t.Fatal(err)
@@ -55,7 +71,7 @@ func TestChmodRemainsOnOpenedInodeAfterReplacement(t *testing.T) {
 	original, moved, target := filepath.Join(base, "original"), filepath.Join(base, "moved"), filepath.Join(base, "target")
 	putFile(t, original, "original inode")
 	putFile(t, target, "must remain unchanged")
-	f, err := os.OpenFile(original, unix.O_PATH|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	f, err := openPinned(original)
 	if err != nil {
 		t.Fatal(err)
 	}
